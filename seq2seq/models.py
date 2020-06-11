@@ -1,5 +1,5 @@
 from __future__ import absolute_import
-from recurrentshop import LSTMCell, RecurrentSequential
+from recurrentshop import LSTMCell, RecurrentSequential, SimpleRNNCell, GRUCell
 from .cells import LSTMDecoderCell, AttentionDecoderCell
 from keras.models import Sequential, Model
 from keras.layers import Dense, Dropout, TimeDistributed, Bidirectional, Input
@@ -12,8 +12,11 @@ Papers:
 [3] Neural Machine Translation by Jointly Learning to Align and Translate (http://arxiv.org/abs/1409.0473)
 '''
 
+rnncell_list = {'SRN': SimpleRNNCell,
+                'LSTM': LSTMCell,
+                'GRU': GRUCell}
 
-def SimpleSeq2Seq(output_dim, output_length, hidden_dim=None, input_shape=None,
+def SimpleSeq2Seq(output_dim, output_length, rnncell_type, hidden_dim=None, input_shape=None,
                   batch_size=None, batch_input_shape=None, input_dim=None,
                   input_length=None, depth=1, dropout=0.0, unroll=False,
                   stateful=False):
@@ -55,26 +58,28 @@ def SimpleSeq2Seq(output_dim, output_length, hidden_dim=None, input_shape=None,
         raise TypeError
     if hidden_dim is None:
         hidden_dim = output_dim
+    
+    rnncell = rnncell_list[rnncell_type]
     encoder = RecurrentSequential(unroll=unroll, stateful=stateful)
-    encoder.add(LSTMCell(hidden_dim, batch_input_shape=(shape[0], shape[-1])))
+    encoder.add(rnncell(hidden_dim, batch_input_shape=(shape[0], shape[-1])))
 
     for _ in range(1, depth[0]):
         encoder.add(Dropout(dropout))
-        encoder.add(LSTMCell(hidden_dim))
+        encoder.add(rnncell(hidden_dim))
 
     decoder = RecurrentSequential(unroll=unroll, stateful=stateful,
                                   decode=True, output_length=output_length)
     decoder.add(Dropout(dropout, batch_input_shape=(shape[0], hidden_dim)))
 
     if depth[1] == 1:
-        decoder.add(LSTMCell(output_dim))
+        decoder.add(rnncell(output_dim))
     else:
-        decoder.add(LSTMCell(hidden_dim))
+        decoder.add(rnncell(hidden_dim))
         for _ in range(depth[1] - 2):
             decoder.add(Dropout(dropout))
-            decoder.add(LSTMCell(hidden_dim))
+            decoder.add(rnncell(hidden_dim))
     decoder.add(Dropout(dropout))
-    decoder.add(LSTMCell(output_dim))
+    decoder.add(rnncell(output_dim))
 
     _input = Input(batch_shape=shape)
     x = encoder(_input)
@@ -82,7 +87,7 @@ def SimpleSeq2Seq(output_dim, output_length, hidden_dim=None, input_shape=None,
     return Model(_input, output)
 
 
-def Seq2Seq(output_dim, output_length, batch_input_shape=None,
+def Seq2Seq(output_dim, output_length, rnncell_type, batch_input_shape=None,
             input_shape=None, batch_size=None, input_dim=None, input_length=None,
             hidden_dim=None, depth=1, broadcast_state=True, unroll=False,
             stateful=False, inner_broadcast_state=True, teacher_force=False,
@@ -157,11 +162,12 @@ def Seq2Seq(output_dim, output_length, batch_input_shape=None,
     if hidden_dim is None:
         hidden_dim = output_dim
 
+    rnncell = rnncell_list[rnncell_type]
     encoder = RecurrentSequential(readout=True, state_sync=inner_broadcast_state,
                                   unroll=unroll, stateful=stateful,
                                   return_states=broadcast_state)
     for _ in range(depth[0]):
-        encoder.add(LSTMCell(hidden_dim, batch_input_shape=(shape[0], hidden_dim)))
+        encoder.add(rnncell(hidden_dim, batch_input_shape=(shape[0], hidden_dim)))
         encoder.add(Dropout(dropout))
 
     dense1 = TimeDistributed(Dense(hidden_dim))
@@ -206,7 +212,7 @@ def Seq2Seq(output_dim, output_length, batch_input_shape=None,
     return model
 
 
-def AttentionSeq2Seq(output_dim, output_length, batch_input_shape=None,
+def AttentionSeq2Seq(output_dim, output_length, rnncell_type, batch_input_shape=None,
                      batch_size=None, input_shape=None, input_length=None,
                      input_dim=None, hidden_dim=None, depth=1,
                      bidirectional=True, unroll=False, stateful=False, dropout=0.0,):
@@ -253,16 +259,18 @@ def AttentionSeq2Seq(output_dim, output_length, batch_input_shape=None,
     if hidden_dim is None:
         hidden_dim = output_dim
 
+    rnncell = rnncell_list[rnncell_type]
+
     _input = Input(batch_shape=shape)
     _input._keras_history[0].supports_masking = True
 
     encoder = RecurrentSequential(unroll=unroll, stateful=stateful,
                                   return_sequences=True)
-    encoder.add(LSTMCell(hidden_dim, batch_input_shape=(shape[0], shape[2])))
+    encoder.add(rnncell(hidden_dim, batch_input_shape=(shape[0], shape[2])))
 
     for _ in range(1, depth[0]):
         encoder.add(Dropout(dropout))
-        encoder.add(LSTMCell(hidden_dim))
+        encoder.add(rnncell(hidden_dim))
 
     if bidirectional:
         encoder = Bidirectional(encoder, merge_mode='sum')
